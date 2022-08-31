@@ -4658,7 +4658,7 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
         vision_msgs::Detection3D detection_msg;
         vision_msgs::ObjectHypothesisWithPose hyp;
 
-        hyp.id = objMsg->objects[idx].label_id;
+        hyp.id = (objMsg->objects[idx].label_id << 16) | class_idx;
         hyp.score = objMsg->objects[idx].confidence;
 
         detection_msg.bbox.center.position.x = objMsg->objects[idx].position[0];

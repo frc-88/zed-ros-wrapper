@@ -3662,7 +3662,7 @@ void ZEDWrapperNodelet::device_poll_thread_func()
             mObjDetMutex.unlock();
 
             mYoloObjMutex.lock();
-            if (mYoloObjRunning && yoloObjDetSubnumber > 0) {
+            if (mYoloObjRunning && (!mYoloObjWarmedUp || yoloObjDetSubnumber > 0)) {
                 detectYoloObjects(stamp);
             }
             mYoloObjMutex.unlock();

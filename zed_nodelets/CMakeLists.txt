@@ -79,6 +79,7 @@ find_package(catkin REQUIRED COMPONENTS
     diagnostic_updater    
     dynamic_reconfigure
     zed_interfaces
+    vision_msgs
 )
 
 generate_dynamic_reconfigure_options(
@@ -100,6 +101,7 @@ catkin_package(
     zed_interfaces
     geometry_msgs
     visualization_msgs
+    vision_msgs
 )
 
 ###############################################################################

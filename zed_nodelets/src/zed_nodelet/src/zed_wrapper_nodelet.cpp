@@ -145,6 +145,7 @@ void ZEDWrapperNodelet::onInit()
     std::string object_det_topic_root = "obj_det";
     std::string object_det_topic = object_det_topic_root + "/objects";
     std::string yolo_object_det_topic = object_det_topic_root + "/yolo_objects";
+    std::string yolo_object_det_3d_topic = object_det_topic_root + "/detections";
 
     std::string confImgRoot = "confidence";
     std::string conf_map_topic_name = "confidence_map";
@@ -483,7 +484,10 @@ void ZEDWrapperNodelet::onInit()
             NODELET_ERROR("Error loading class names from %s", mYoloClassNamesPath.c_str());
         }
         mYoloObjPub = mNhNs.advertise<zed_interfaces::ObjectsStamped>(yolo_object_det_topic, 1);
+        mYoloObjDet3DPub = mNhNs.advertise<vision_msgs::Detection3DArray>(yolo_object_det_3d_topic, 1);
+        
         NODELET_INFO_STREAM("Advertised on topic " << mYoloObjPub.getTopic());
+        NODELET_INFO_STREAM("Advertised on topic " << mYoloObjDet3DPub.getTopic());
     }
 
     // Odometry and Pose publisher
@@ -3379,7 +3383,7 @@ void ZEDWrapperNodelet::device_poll_thread_func()
 
         uint32_t yoloObjDetSubnumber = 0;
         if (mYoloObjEnabled && mYoloObjRunning) {
-            yoloObjDetSubnumber = mYoloObjPub.getNumSubscribers();
+            yoloObjDetSubnumber = mYoloObjPub.getNumSubscribers() + mYoloObjDet3DPub.getNumSubscribers();
         }
 
         mGrabActive = mRecording || mStreaming || mMappingEnabled || mObjDetEnabled || mYoloObjEnabled || mPosTrackingEnabled || mPosTrackingActivated || ((rgbSubnumber + rgbRawSubnumber + leftSubnumber + leftRawSubnumber + rightSubnumber + rightRawSubnumber + rgbGraySubnumber + rgbGrayRawSubnumber + leftGraySubnumber + leftGrayRawSubnumber + rightGraySubnumber + rightGrayRawSubnumber + depthSubnumber + disparitySubnumber + cloudSubnumber + poseSubnumber + poseCovSubnumber + odomSubnumber + confMapSubnumber /*+ imuSubnumber + imuRawsubnumber*/ + pathSubNumber + stereoSubNumber + stereoRawSubNumber + objDetSubnumber + yoloObjDetSubnumber) > 0);
@@ -4595,6 +4599,7 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
     size_t objCount = objects.object_list.size();
 
     zed_interfaces::ObjectsStampedPtr objMsg = boost::make_shared<zed_interfaces::ObjectsStamped>();
+    vision_msgs::Detection3DArrayPtr det3dMsg = boost::make_shared<vision_msgs::Detection3DArray>();
 
     objMsg->header.stamp = timestamp;
     objMsg->header.frame_id = mLeftCamFrameId;
@@ -4641,11 +4646,31 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
 
         objMsg->objects[idx].skeleton_available = false;
 
+
+        vision_msgs::Detection3D detection_msg;
+        vision_msgs::ObjectHypothesisWithPose hyp;
+
+        hyp.id = objMsg->objects[idx].label_id;
+        hyp.score = objMsg->objects[idx].confidence;
+
+        detection_msg.bbox.center.position.x = objMsg->objects[idx].position[0];
+        detection_msg.bbox.center.position.y = objMsg->objects[idx].position[1];
+        detection_msg.bbox.center.position.z = objMsg->objects[idx].position[2];
+        detection_msg.bbox.center.orientation.w = 1.0;
+        detection_msg.bbox.size.x = objMsg->objects[idx].dimensions_3d[0];
+        detection_msg.bbox.size.y = objMsg->objects[idx].dimensions_3d[1];
+        detection_msg.bbox.size.z = objMsg->objects[idx].dimensions_3d[2];
+        hyp.pose.pose = detection_msg.bbox.center;
+
+        detection_msg.results.push_back(hyp);
+        det3dMsg->detections.push_back(detection_msg);
+
         // at the end of the loop
         idx++;
     }
 
     mYoloObjPub.publish(objMsg);
+    mYoloObjDet3DPub.publish(objMsg);
 }
 
 bool ZEDWrapperNodelet::detectionsToSlObjects(const std::vector<Detection>& detections, sl::Objects& objects)

@@ -1574,6 +1574,14 @@ bool ZEDWrapperNodelet::start_yolo_obj_detect()
         NODELET_INFO_STREAM("Advertised on topic " << mYoloObjPub.getTopic());
     }
 
+    if (mYoloObjDet3DPub.getTopic().empty()) {
+        std::string object_det_topic_root = "obj_det";
+        std::string object_det_topic = object_det_topic_root + "/detections";
+
+        mYoloObjDet3DPub = mNhNs.advertise<vision_msgs::Detection3DArray>(object_det_topic, 1);
+        NODELET_INFO_STREAM("Advertised on topic " << mYoloObjDet3DPub.getTopic());
+    }
+
     mYoloObjRunning = true;
     NODELET_INFO_STREAM("YOLO Object detection initialized");
     return true;
@@ -4670,7 +4678,7 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
     }
 
     mYoloObjPub.publish(objMsg);
-    mYoloObjDet3DPub.publish(objMsg);
+    mYoloObjDet3DPub.publish(det3dMsg);
 }
 
 bool ZEDWrapperNodelet::detectionsToSlObjects(const std::vector<Detection>& detections, sl::Objects& objects)

@@ -1125,7 +1125,7 @@ void ZEDWrapperNodelet::initTransforms()
 
 bool ZEDWrapperNodelet::getCamera2BaseTransform()
 {
-    NODELET_DEBUG("Getting static TF from '%s' to '%s'", mCameraFrameId.c_str(), mBaseFrameId.c_str());
+    NODELET_INFO("Getting static TF from '%s' to '%s'", mCameraFrameId.c_str(), mBaseFrameId.c_str());
 
     mCamera2BaseTransfValid = false;
     static bool first_error = true;
@@ -1171,7 +1171,7 @@ bool ZEDWrapperNodelet::getCamera2BaseTransform()
 
 bool ZEDWrapperNodelet::getSens2CameraTransform()
 {
-    NODELET_DEBUG("Getting static TF from '%s' to '%s'", mDepthFrameId.c_str(), mCameraFrameId.c_str());
+    NODELET_INFO("Getting static TF from '%s' to '%s'", mDepthFrameId.c_str(), mCameraFrameId.c_str());
 
     mSensor2CameraTransfValid = false;
 
@@ -1218,7 +1218,7 @@ bool ZEDWrapperNodelet::getSens2CameraTransform()
 
 bool ZEDWrapperNodelet::getSens2BaseTransform()
 {
-    NODELET_DEBUG("Getting static TF from '%s' to '%s'", mDepthFrameId.c_str(), mBaseFrameId.c_str());
+    NODELET_INFO("Getting static TF from '%s' to '%s'", mDepthFrameId.c_str(), mBaseFrameId.c_str());
 
     mSensor2BaseTransfValid = false;
     static bool first_error = true;
@@ -1265,6 +1265,9 @@ bool ZEDWrapperNodelet::getSens2BaseTransform()
 bool ZEDWrapperNodelet::set_pose(float xt, float yt, float zt, float rr, float pr, float yr)
 {
     initTransforms();
+    NODELET_INFO_STREAM("mSensor2BaseTransfValid: " << mSensor2BaseTransfValid);
+    NODELET_INFO_STREAM("mSensor2CameraTransfValid: " << mSensor2CameraTransfValid);
+    NODELET_INFO_STREAM("mCamera2BaseTransfValid: " << mCamera2BaseTransfValid);
 
     if (!mSensor2BaseTransfValid) {
         getSens2BaseTransform();
@@ -3379,14 +3382,14 @@ void ZEDWrapperNodelet::device_poll_thread_func()
             yoloObjDetSubnumber = mYoloObjPub.getNumSubscribers();
         }
 
-        mGrabActive = mRecording || mStreaming || mMappingEnabled || mObjDetEnabled || mPosTrackingEnabled || mPosTrackingActivated || ((rgbSubnumber + rgbRawSubnumber + leftSubnumber + leftRawSubnumber + rightSubnumber + rightRawSubnumber + rgbGraySubnumber + rgbGrayRawSubnumber + leftGraySubnumber + leftGrayRawSubnumber + rightGraySubnumber + rightGrayRawSubnumber + depthSubnumber + disparitySubnumber + cloudSubnumber + poseSubnumber + poseCovSubnumber + odomSubnumber + confMapSubnumber /*+ imuSubnumber + imuRawsubnumber*/ + pathSubNumber + stereoSubNumber + stereoRawSubNumber + objDetSubnumber + yoloObjDetSubnumber) > 0);
+        mGrabActive = mRecording || mStreaming || mMappingEnabled || mObjDetEnabled || mYoloObjEnabled || mPosTrackingEnabled || mPosTrackingActivated || ((rgbSubnumber + rgbRawSubnumber + leftSubnumber + leftRawSubnumber + rightSubnumber + rightRawSubnumber + rgbGraySubnumber + rgbGrayRawSubnumber + leftGraySubnumber + leftGrayRawSubnumber + rightGraySubnumber + rightGrayRawSubnumber + depthSubnumber + disparitySubnumber + cloudSubnumber + poseSubnumber + poseCovSubnumber + odomSubnumber + confMapSubnumber /*+ imuSubnumber + imuRawsubnumber*/ + pathSubNumber + stereoSubNumber + stereoRawSubNumber + objDetSubnumber + yoloObjDetSubnumber) > 0);
 
         // Run the loop only if there is some subscribers or SVO is active
         if (mGrabActive) {
             std::lock_guard<std::mutex> lock(mPosTrkMutex);
 
             // Note: ones tracking is started it is never stopped anymore to not lose tracking information
-            bool computeTracking = (mPosTrackingEnabled || mPosTrackingActivated || mMappingEnabled || mObjDetEnabled || (mComputeDepth & mDepthStabilization) || poseSubnumber > 0 || poseCovSubnumber > 0 || odomSubnumber > 0 || pathSubNumber > 0);
+            bool computeTracking = (mPosTrackingEnabled || mPosTrackingActivated || mMappingEnabled || mObjDetEnabled || mYoloObjEnabled || (mComputeDepth & mDepthStabilization) || poseSubnumber > 0 || poseCovSubnumber > 0 || odomSubnumber > 0 || pathSubNumber > 0);
 
             // Start the tracking?
             if ((computeTracking) && !mPosTrackingActivated && (mDepthMode != sl::DEPTH_MODE::NONE)) {

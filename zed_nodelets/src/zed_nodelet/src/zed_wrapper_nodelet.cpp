@@ -144,6 +144,7 @@ void ZEDWrapperNodelet::onInit()
 
     std::string object_det_topic_root = "obj_det";
     std::string object_det_topic = object_det_topic_root + "/objects";
+    std::string yolo_object_det_topic = object_det_topic_root + "/yolo_objects";
 
     std::string confImgRoot = "confidence";
     std::string conf_map_topic_name = "confidence_map";
@@ -467,6 +468,22 @@ void ZEDWrapperNodelet::onInit()
     if (mObjDetEnabled) {
         mPubObjDet = mNhNs.advertise<zed_interfaces::ObjectsStamped>(object_det_topic, 1);
         NODELET_INFO_STREAM("Advertised on topic " << mPubObjDet.getTopic());
+    }
+
+    if (mYoloObjEnabled) {
+        torch::DeviceType device_type;
+        if (torch::cuda::is_available()) {
+            device_type = torch::kCUDA;
+        } else {
+            device_type = torch::kCPU;
+        }
+        mDetector = new YoloDetector(mYoloModelPath, device_type, mYoloReportLoopTimes);
+        mYoloClassNames = YoloDetector::LoadNames(mYoloClassNamesPath);
+        if (mYoloClassNames.empty()) {
+            NODELET_ERROR("Error loading class names from %s", mYoloClassNamesPath.c_str());
+        }
+        mYoloObjPub = mNhNs.advertise<zed_interfaces::ObjectsStamped>(yolo_object_det_topic, 1);
+        NODELET_INFO_STREAM("Advertised on topic " << mYoloObjPub.getTopic());
     }
 
     // Odometry and Pose publisher
@@ -964,6 +981,48 @@ void ZEDWrapperNodelet::readParameters()
         mTriggerAutoWB = true;
     }
     // <---- Dynamic
+
+    // ----> YOLOv5
+    NODELET_INFO_STREAM("*** YOLO OBJECT DETECTION parameters ***");
+    if (mZedUserCamModel == sl::MODEL::ZED || mZedUserCamModel == sl::MODEL::ZED_M) {
+        NODELET_WARN_STREAM(
+            "!!! YOLO OD parameters are not used with ZED and ZED Mini !!!");
+    }
+
+    mNhNs.param<bool>("yolo_object_detection/enabled", mYoloObjEnabled, true);
+    NODELET_INFO_STREAM(" * YOLO Object Detection enabled: \t\t\t-> " << (mYoloObjEnabled ? "ENABLED" : "DISABLED"));
+
+    mNhNs.param<float>("yolo_object_detection/confidence_threshold", mYoloObjDetConfidence, mYoloObjDetConfidence);
+    NODELET_INFO_STREAM(" * YOLO OD min. confidence: \t\t\t-> " << mYoloObjDetConfidence);
+
+    mYoloObjDetConfidence /= 100.0f;
+    mNhNs.param<float>("yolo_object_detection/nms_iou_confidence_threshold", mYoloObjDetNmsConfidence, mYoloObjDetNmsConfidence);
+    NODELET_INFO_STREAM(" * YOLO OD NMS IOU min. confidence: \t\t\t-> " << mYoloObjDetNmsConfidence);
+    mYoloObjDetNmsConfidence /= 100.0f;
+
+    mNhNs.param<std::string>("yolo_object_detection/model_path", mYoloModelPath, "notdefined.torchscript");
+    NODELET_INFO_STREAM(" * YOLO OD model path (.torchscript): \t\t\t-> " << mYoloModelPath);
+    
+    mNhNs.param<std::string>("yolo_object_detection/class_names_path", mYoloClassNamesPath, "notdefined.names");
+    NODELET_INFO_STREAM(" * YOLO OD class names path (.names): \t\t\t-> " << mYoloClassNamesPath);
+    
+    mNhNs.param<bool>("yolo_object_detection/report_loop_times", mYoloReportLoopTimes, mYoloReportLoopTimes);
+    NODELET_INFO_STREAM(" * YOLO OD report loop times: \t\t\t-> " << (mYoloReportLoopTimes ? "ENABLED" : "DISABLED"));
+    
+    mNhNs.param<bool>("yolo_object_detection/object_tracking_enabled", mYoloObjTracking, mYoloObjTracking);
+    NODELET_INFO_STREAM(" * YOLO OD tracking: \t\t\t-> " << (mYoloObjTracking ? "ENABLED" : "DISABLED"));
+    
+    int filtering_mode = static_cast<int>(mYoloObjFilterMode);
+    mNhNs.param<int>("yolo_object_detection/filtering_mode", filtering_mode, filtering_mode);
+    mYoloObjFilterMode = static_cast<sl::OBJECT_FILTERING_MODE>(filtering_mode);
+    NODELET_INFO_STREAM(" * YOLO Object Filtering mode: \t\t\t-> " << filtering_mode << " - "
+                                     << sl::toString(mYoloObjFilterMode).c_str());
+    if (mYoloObjEnabled && mObjDetEnabled) {
+        mObjDetEnabled = false;
+        NODELET_WARN_STREAM(" * YOLO OD is enabled. Disabling normal object detection");
+    }
+    // <---- YOLOv5
+
 }
 
 void ZEDWrapperNodelet::checkResolFps()
@@ -1462,6 +1521,67 @@ void ZEDWrapperNodelet::stop_obj_detect()
         mZed.disableObjectDetection();
     }
 }
+
+bool ZEDWrapperNodelet::start_yolo_obj_detect()
+{
+    if (mZedRealCamModel == sl::MODEL::ZED) {
+        NODELET_ERROR_STREAM("YOLO Object detection not started. OD is not available for ZED camera model");
+        return false;
+    }
+
+    if (!mYoloObjEnabled) {
+        return false;
+    }
+
+    if (!mCamera2BaseTransfValid || !mSensor2CameraTransfValid || !mSensor2BaseTransfValid) {
+        NODELET_INFO("Tracking transforms not yet ready, OD starting postponed");
+        return false;
+    }
+
+    NODELET_INFO_STREAM("*** Starting YOLO Object Detection ***");
+
+    sl::ObjectDetectionParameters od_p;
+    od_p.enable_mask_output = false;
+    od_p.enable_tracking = mYoloObjTracking;
+    od_p.image_sync = true; // Asynchronous object detection
+    od_p.detection_model = sl::DETECTION_MODEL::CUSTOM_BOX_OBJECTS;
+    od_p.enable_body_fitting = false;
+    od_p.filtering_mode = mYoloObjFilterMode;
+    od_p.max_range = mCamMaxDepth;
+
+    sl::ERROR_CODE objDetError
+        = mZed.enableObjectDetection(od_p);
+
+    if (objDetError != sl::ERROR_CODE::SUCCESS) {
+        NODELET_ERROR_STREAM("YOLO Object detection error: "<< static_cast<int>(objDetError) << ", " << sl::toString(objDetError));
+
+        mYoloObjRunning = false;
+        return false;
+    }
+
+    if (mYoloObjPub.getTopic().empty()) {
+        std::string object_det_topic_root = "obj_det";
+        std::string object_det_topic = object_det_topic_root + "/yolo_objects";
+
+        mYoloObjPub = mNhNs.advertise<zed_interfaces::ObjectsStamped>(object_det_topic, 1);
+        NODELET_INFO_STREAM("Advertised on topic " << mYoloObjPub.getTopic());
+    }
+
+    mYoloObjRunning = true;
+    NODELET_INFO_STREAM("YOLO Object detection initialized");
+    return true;
+}
+
+void ZEDWrapperNodelet::stop_yolo_obj_detect()
+{
+    if (mYoloObjRunning) {
+        NODELET_INFO_STREAM("*** Stopping YOLO Object Detection ***");
+        mYoloObjRunning = false;
+        mYoloObjEnabled = false;
+        mZed.disableObjectDetection();
+    }
+}
+
 
 void ZEDWrapperNodelet::start_pos_tracking()
 {
@@ -3254,7 +3374,12 @@ void ZEDWrapperNodelet::device_poll_thread_func()
             objDetSubnumber = mPubObjDet.getNumSubscribers();
         }
 
-        mGrabActive = mRecording || mStreaming || mMappingEnabled || mObjDetEnabled || mPosTrackingEnabled || mPosTrackingActivated || ((rgbSubnumber + rgbRawSubnumber + leftSubnumber + leftRawSubnumber + rightSubnumber + rightRawSubnumber + rgbGraySubnumber + rgbGrayRawSubnumber + leftGraySubnumber + leftGrayRawSubnumber + rightGraySubnumber + rightGrayRawSubnumber + depthSubnumber + disparitySubnumber + cloudSubnumber + poseSubnumber + poseCovSubnumber + odomSubnumber + confMapSubnumber /*+ imuSubnumber + imuRawsubnumber*/ + pathSubNumber + stereoSubNumber + stereoRawSubNumber + objDetSubnumber) > 0);
+        uint32_t yoloObjDetSubnumber = 0;
+        if (mYoloObjEnabled && mYoloObjRunning) {
+            yoloObjDetSubnumber = mYoloObjPub.getNumSubscribers();
+        }
+
+        mGrabActive = mRecording || mStreaming || mMappingEnabled || mObjDetEnabled || mPosTrackingEnabled || mPosTrackingActivated || ((rgbSubnumber + rgbRawSubnumber + leftSubnumber + leftRawSubnumber + rightSubnumber + rightRawSubnumber + rgbGraySubnumber + rgbGrayRawSubnumber + leftGraySubnumber + leftGrayRawSubnumber + rightGraySubnumber + rightGrayRawSubnumber + depthSubnumber + disparitySubnumber + cloudSubnumber + poseSubnumber + poseCovSubnumber + odomSubnumber + confMapSubnumber /*+ imuSubnumber + imuRawsubnumber*/ + pathSubNumber + stereoSubNumber + stereoRawSubNumber + objDetSubnumber + yoloObjDetSubnumber) > 0);
 
         // Run the loop only if there is some subscribers or SVO is active
         if (mGrabActive) {
@@ -3282,8 +3407,15 @@ void ZEDWrapperNodelet::device_poll_thread_func()
             }
             mObjDetMutex.unlock();
 
+            mYoloObjMutex.lock();
+            // Start the yolo object detection?
+            if (mYoloObjEnabled && !mYoloObjRunning) {
+                start_yolo_obj_detect();
+            }
+            mYoloObjMutex.unlock();
+
             // Detect if one of the subscriber need to have the depth information
-            mComputeDepth = mDepthMode != sl::DEPTH_MODE::NONE && (computeTracking || ((depthSubnumber + disparitySubnumber + cloudSubnumber + fusedCloudSubnumber + poseSubnumber + poseCovSubnumber + odomSubnumber + confMapSubnumber + objDetSubnumber) > 0));
+            mComputeDepth = mDepthMode != sl::DEPTH_MODE::NONE && (computeTracking || ((depthSubnumber + disparitySubnumber + cloudSubnumber + fusedCloudSubnumber + poseSubnumber + poseCovSubnumber + odomSubnumber + confMapSubnumber + objDetSubnumber + yoloObjDetSubnumber) > 0));
 
             if (mComputeDepth) {
                 runParams.confidence_threshold = mCamDepthConfidence;
@@ -3525,6 +3657,12 @@ void ZEDWrapperNodelet::device_poll_thread_func()
                 processDetectedObjects(stamp);
             }
             mObjDetMutex.unlock();
+
+            mYoloObjMutex.lock();
+            if (mYoloObjRunning && yoloObjDetSubnumber > 0) {
+                detectYoloObjects(stamp);
+            }
+            mYoloObjMutex.unlock();
 
             // Publish the odometry if someone has subscribed to
             if (computeTracking) {
@@ -4412,6 +4550,128 @@ void ZEDWrapperNodelet::processDetectedObjects(ros::Time t)
 
     mPubObjDet.publish(objMsg);
 }
+
+void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
+{
+    if (!mYoloObjEnabled) {
+        return;
+    }
+
+    sl::ObjectDetectionRuntimeParameters objectTracker_parameters_rt;
+
+    static sl::Mat mat_left;
+    static sl::Objects objects;
+    static std::vector<std::vector<Detection>> detections;
+    if (mZed.retrieveImage(mat_left, sl::VIEW::LEFT, sl::MEM::CPU, mMatResolVideo) == sl::ERROR_CODE::SUCCESS)
+    {
+        cv::Mat cvmat_left = sl_tools::slMat2cvMat(mat_left);
+        if (mYoloObjWarmedUp) {
+            detections = mDetector->Run(cvmat_left, mYoloObjDetConfidence, mYoloObjDetNmsConfidence);            
+        }
+        else {
+            NODELET_INFO_STREAM("YOLO detector is warming up. First object detection will take a few seconds.");
+            for (int count = 0; count < 2; count++) {  // At least two images need to go through detector before it runs at full speed
+                detections = mDetector->Run(cvmat_left, mYoloObjDetConfidence, mYoloObjDetNmsConfidence);
+            }
+            NODELET_INFO_STREAM("YOLO detector is warmed up");
+        }
+        mYoloObjWarmedUp = true;
+        if (detections.empty()) {
+            return;
+        }
+
+        if (!detectionsToSlObjects(detections[0], objects)) {
+            NODELET_INFO_STREAM("failed to convert yolo to sl objects");
+            return;
+        }
+    }
+    else {
+        NODELET_INFO_STREAM("failed to retrieve left image");
+    }
+
+    size_t objCount = objects.object_list.size();
+
+    zed_interfaces::ObjectsStampedPtr objMsg = boost::make_shared<zed_interfaces::ObjectsStamped>();
+
+    objMsg->header.stamp = timestamp;
+    objMsg->header.frame_id = mLeftCamFrameId;
+
+    objMsg->objects.resize(objCount);
+
+    size_t idx = 0;
+    for (auto data : objects.object_list) {
+        int class_idx = detections[0][idx].class_idx;
+        std::string class_name = 0 <= class_idx && class_idx < mYoloClassNames.size() ? mYoloClassNames[class_idx] : "Unknown";
+        objMsg->objects[idx].label = class_name;
+        objMsg->objects[idx].sublabel = std::to_string(class_idx);
+        objMsg->objects[idx].label_id = data.id;
+        objMsg->objects[idx].confidence = data.confidence;
+
+        memcpy(&(objMsg->objects[idx].position[0]),
+            &(data.position[0]),
+            3 * sizeof(float));
+        memcpy(&(objMsg->objects[idx].position_covariance[0]),
+            &(data.position_covariance[0]),
+            6 * sizeof(float));
+        memcpy(&(objMsg->objects[idx].velocity[0]),
+            &(data.velocity[0]),
+            3 * sizeof(float));
+
+        objMsg->objects[idx].tracking_available = mYoloObjTracking;
+        objMsg->objects[idx].tracking_state = static_cast<int8_t>(data.tracking_state);
+        objMsg->objects[idx].action_state = static_cast<int8_t>(data.action_state);
+
+        if (data.bounding_box_2d.size() == 4) {
+            memcpy(&(objMsg->objects[idx].bounding_box_2d.corners[0]),
+                &(data.bounding_box_2d[0]),
+                8 * sizeof(unsigned int));
+        }
+        if (data.bounding_box.size() == 8) {
+            memcpy(&(objMsg->objects[idx].bounding_box_3d.corners[0]),
+                &(data.bounding_box[0]),
+                24 * sizeof(float));
+        }
+
+        memcpy(&(objMsg->objects[idx].dimensions_3d[0]),
+            &(data.dimensions[0]),
+            3 * sizeof(float));
+
+        objMsg->objects[idx].skeleton_available = false;
+
+        // at the end of the loop
+        idx++;
+    }
+
+    mYoloObjPub.publish(objMsg);
+}
+
+bool ZEDWrapperNodelet::detectionsToSlObjects(const std::vector<Detection>& detections, sl::Objects& objects)
+{
+    std::vector<sl::CustomBoxObjectData> objects_in;
+    sl::ObjectDetectionRuntimeParameters objectTracker_parameters_rt;
+    for (const auto& detection : detections) {
+        const auto& box = detection.bbox;
+        float score = detection.score;
+        int class_idx = detection.class_idx;
+        sl::CustomBoxObjectData tmp;
+        // Fill the detections into the correct format
+        tmp.unique_object_id = sl::generate_unique_id();
+        tmp.probability = score;
+        tmp.label = class_idx;
+        tmp.bounding_box_2d = sl_tools::cvToSlBbox(box);
+        tmp.is_grounded = false;
+        // others are tracked in full 3D space                
+        objects_in.push_back(tmp);
+    }
+    mZed.ingestCustomBoxObjects(objects_in);
+    sl::ERROR_CODE code = mZed.retrieveObjects(objects, objectTracker_parameters_rt);
+    if (code != sl::ERROR_CODE::SUCCESS) {
+        NODELET_WARN_THROTTLE(0.5, "Failed to retrieve yolo objects. Code: %d, Num objects: %lu, %lu, %lu", (int)code, objects.object_list.size(), objects_in.size(), detections.size());
+    }
+    return code == sl::ERROR_CODE::SUCCESS;
+}
+
+
 
 void ZEDWrapperNodelet::clickedPtCallback(geometry_msgs::PointStampedConstPtr msg)
 {

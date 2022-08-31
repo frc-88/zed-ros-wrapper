@@ -59,6 +59,8 @@
 #include <zed_interfaces/stop_svo_recording.h>
 #include <zed_interfaces/toggle_led.h>
 
+#include "yolo_detector.hpp"
+
 // Topics
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <nav_msgs/Odometry.h>
@@ -375,9 +377,25 @@ protected:
    */
     void stop_obj_detect();
 
+    /*! \brief Start yolo object detection
+   */
+    bool start_yolo_obj_detect();
+
+    /*! \brief Stop yolo object detection
+   */
+    void stop_yolo_obj_detect();
+
     /*! \brief Publish object detection results
    */
     void processDetectedObjects(ros::Time t);
+
+    /*! \brief Convert yolo objects to sl objects
+   */
+    bool detectionsToSlObjects(const std::vector<Detection>& detections, sl::Objects& objects);
+
+    /*! \brief Publish yolo object detection results
+   */
+    void detectYoloObjects(ros::Time t);
 
     /*! \brief Generates an univoque color for each object class ID
    */
@@ -672,6 +690,7 @@ private:
     std::mutex mDynParMutex;
     std::mutex mMappingMutex;
     std::mutex mObjDetMutex;
+    std::mutex mYoloObjMutex;
     std::condition_variable mPcDataReadyCondVar;
     bool mPcDataReady;
     std::condition_variable mRgbDepthDataRetrievedCondVar;
@@ -695,6 +714,7 @@ private:
     std::unique_ptr<sl_tools::CSmartMean> mPcPeriodMean_usec;
     std::unique_ptr<sl_tools::CSmartMean> mSensPeriodMean_usec;
     std::unique_ptr<sl_tools::CSmartMean> mObjDetPeriodMean_msec;
+    std::unique_ptr<sl_tools::CSmartMean> mYoloObjPeriodMean_msec;
 
     diagnostic_updater::Updater mDiagUpdater; // Diagnostic Updater
 
@@ -725,10 +745,24 @@ private:
     bool mObjDetElectronicsEnable = true;
     bool mObjDetFruitsEnable = true;
     bool mObjDetSportsEnable = true;
-
     sl::DETECTION_MODEL mObjDetModel = sl::DETECTION_MODEL::MULTI_CLASS_BOX;
-
     ros::Publisher mPubObjDet;
+
+    // Yolo Object Detection
+    bool mYoloObjEnabled = false;
+    bool mYoloObjRunning = false;
+    bool mYoloObjTracking = false;
+    bool mYoloObjWarmedUp = false;
+    std::string mYoloModelPath = "";
+    std::string mYoloClassNamesPath = "";
+    float mYoloObjDetConfidence = 40.0f;
+    float mYoloObjDetNmsConfidence = 20.0f;
+    bool mYoloReportLoopTimes = false;
+    sl::OBJECT_FILTERING_MODE mYoloObjFilterMode = sl::OBJECT_FILTERING_MODE::NMS3D;
+    YoloDetector* mDetector;
+    std::vector<std::string> mYoloClassNames;
+    ros::Publisher mYoloObjPub;
+
 }; // class ZEDROSWrapperNodelet
 } // namespace zed_nodelets
 

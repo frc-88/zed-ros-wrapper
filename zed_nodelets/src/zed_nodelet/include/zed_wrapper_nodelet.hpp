@@ -74,6 +74,8 @@
 #include <sensor_msgs/point_cloud2_iterator.h>
 #include <stereo_msgs/DisparityImage.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include "vision_msgs/Detection3DArray.h"
+#include <vision_msgs/Detection3D.h>
 
 #include <condition_variable>
 #include <memory>
@@ -762,6 +764,7 @@ private:
     YoloDetector* mDetector;
     std::vector<std::string> mYoloClassNames;
     ros::Publisher mYoloObjPub;
+    ros::Publisher mYoloObjDet3DPub;
 
 }; // class ZEDROSWrapperNodelet
 } // namespace zed_nodelets

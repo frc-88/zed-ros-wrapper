@@ -4607,12 +4607,18 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
     size_t objCount = objects.object_list.size();
 
     zed_interfaces::ObjectsStampedPtr objMsg = boost::make_shared<zed_interfaces::ObjectsStamped>();
-    vision_msgs::Detection3DArrayPtr det3dMsg = boost::make_shared<vision_msgs::Detection3DArray>();
 
     objMsg->header.stamp = timestamp;
     objMsg->header.frame_id = mLeftCamFrameId;
 
     objMsg->objects.resize(objCount);
+
+    vision_msgs::Detection3DArrayPtr det3dMsg = boost::make_shared<vision_msgs::Detection3DArray>();
+
+    det3dMsg->header.stamp = timestamp;
+    det3dMsg->header.frame_id = mLeftCamFrameId;
+
+    det3dMsg->detections.resize(objCount);
 
     size_t idx = 0;
     for (auto data : objects.object_list) {
@@ -4658,6 +4664,8 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
         vision_msgs::Detection3D detection_msg;
         vision_msgs::ObjectHypothesisWithPose hyp;
 
+        detection_msg.header = det3dMsg->header;
+
         hyp.id = (objMsg->objects[idx].label_id << 16) | class_idx;
         hyp.score = objMsg->objects[idx].confidence;
 
@@ -4671,7 +4679,7 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
         hyp.pose.pose = detection_msg.bbox.center;
 
         detection_msg.results.push_back(hyp);
-        det3dMsg->detections.push_back(detection_msg);
+        det3dMsg->detections[idx] = detection_msg;
 
         // at the end of the loop
         idx++;

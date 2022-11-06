@@ -472,23 +472,13 @@ void ZEDWrapperNodelet::onInit()
     }
 
     if (mYoloObjEnabled) {
-        torch::DeviceType device_type;
-        if (torch::cuda::is_available()) {
-            device_type = torch::kCUDA;
-        } else {
-            device_type = torch::kCPU;
-        }
-        mDetector = new YoloDetector(mYoloModelPath, device_type, mYoloReportLoopTimes);
-        mYoloClassNames = YoloDetector::LoadNames(mYoloClassNamesPath);
-        if (mYoloClassNames.empty()) {
-            NODELET_ERROR("Error loading class names from %s", mYoloClassNamesPath.c_str());
-        }
         mYoloObjPub = mNhNs.advertise<zed_interfaces::ObjectsStamped>(yolo_object_det_topic, 1);
         mYoloObjDet3DPub = mNhNs.advertise<vision_msgs::Detection3DArray>(yolo_object_det_3d_topic, 1);
         
         NODELET_INFO_STREAM("Advertised on topic " << mYoloObjPub.getTopic());
         NODELET_INFO_STREAM("Advertised on topic " << mYoloObjDet3DPub.getTopic());
     }
+    mDetector = NULL;
 
     // Odometry and Pose publisher
     mPubPose = mNhNs.advertise<geometry_msgs::PoseStamped>(poseTopic, 1);
@@ -1549,6 +1539,21 @@ bool ZEDWrapperNodelet::start_yolo_obj_detect()
     }
 
     NODELET_INFO_STREAM("*** Starting YOLO Object Detection ***");
+
+    if (mDetector == NULL)
+    {
+        torch::DeviceType device_type;
+        if (torch::cuda::is_available()) {
+            device_type = torch::kCUDA;
+        } else {
+            device_type = torch::kCPU;
+        }
+        mDetector = new YoloDetector(mYoloModelPath, device_type, mYoloReportLoopTimes);
+        mYoloClassNames = YoloDetector::LoadNames(mYoloClassNamesPath);
+        if (mYoloClassNames.empty()) {
+            NODELET_ERROR("Error loading class names from %s", mYoloClassNamesPath.c_str());
+        }
+    }
 
     sl::ObjectDetectionParameters od_p;
     od_p.enable_mask_output = false;

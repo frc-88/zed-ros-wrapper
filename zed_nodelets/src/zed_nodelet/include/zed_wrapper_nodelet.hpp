@@ -509,6 +509,8 @@ private:
     ros::ServiceServer mSrvSave3dMap;
     ros::ServiceServer mSrvStartObjDet;
     ros::ServiceServer mSrvStopObjDet;
+    ros::ServiceServer mSrvYoloStartObjDet;
+    ros::ServiceServer mSrvYoloStopObjDet;
     ros::ServiceServer mSrvSaveAreaMemory;
 
     // ----> Topics (ONLY THOSE NOT CHANGING WHILE NODE RUNS)

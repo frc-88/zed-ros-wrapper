@@ -611,8 +611,8 @@ void ZEDWrapperNodelet::onInit()
     mSrvStartObjDet = mNhNs.advertiseService("start_object_detection", &ZEDWrapperNodelet::on_start_object_detection, this);
     mSrvStopObjDet = mNhNs.advertiseService("stop_object_detection", &ZEDWrapperNodelet::on_stop_object_detection, this);
 
-    mSrvStartObjDet = mNhNs.advertiseService("start_yolo_object_detection", &ZEDWrapperNodelet::on_start_yolo_object_detection, this);
-    mSrvStopObjDet = mNhNs.advertiseService("stop_yolo_object_detection", &ZEDWrapperNodelet::on_stop_yolo_object_detection, this);
+    mSrvYoloStartObjDet = mNhNs.advertiseService("start_yolo_object_detection", &ZEDWrapperNodelet::on_start_yolo_object_detection, this);
+    mSrvYoloStopObjDet = mNhNs.advertiseService("stop_yolo_object_detection", &ZEDWrapperNodelet::on_stop_yolo_object_detection, this);
 
     mSrvSaveAreaMemory = mNhNs.advertiseService("save_area_memory", &ZEDWrapperNodelet::on_save_area_memory, this);
 

@@ -1533,6 +1533,11 @@ bool ZEDWrapperNodelet::start_yolo_obj_detect()
         return false;
     }
 
+    if (mYoloObjEnabled && mObjDetEnabled) {
+        mObjDetEnabled = false;
+        NODELET_WARN_STREAM(" * YOLO OD is enabled. Disabling normal object detection");
+    }
+
     if (!mCamera2BaseTransfValid || !mSensor2CameraTransfValid || !mSensor2BaseTransfValid) {
         NODELET_INFO("Tracking transforms not yet ready, OD starting postponed");
         return false;
@@ -4643,6 +4648,17 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
     static sl::Mat mat_left;
     static sl::Objects objects;
     static std::vector<std::vector<Detection>> detections;
+
+    zed_interfaces::ObjectsStampedPtr objMsg = boost::make_shared<zed_interfaces::ObjectsStamped>();
+
+    objMsg->header.stamp = timestamp;
+    objMsg->header.frame_id = mLeftCamFrameId;
+
+    vision_msgs::Detection3DArrayPtr det3dMsg = boost::make_shared<vision_msgs::Detection3DArray>();
+
+    det3dMsg->header.stamp = timestamp;
+    det3dMsg->header.frame_id = mLeftCamFrameId;
+
     if (mZed.retrieveImage(mat_left, sl::VIEW::LEFT, sl::MEM::CPU, mMatResolVideo) == sl::ERROR_CODE::SUCCESS)
     {
         cv::Mat cvmat_left = sl_tools::slMat2cvMat(mat_left);
@@ -4658,11 +4674,15 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
         }
         mYoloObjWarmedUp = true;
         if (detections.empty()) {
+            mYoloObjPub.publish(objMsg);
+            mYoloObjDet3DPub.publish(det3dMsg);
             return;
         }
 
         if (!detectionsToSlObjects(detections[0], objects)) {
-            NODELET_INFO_STREAM("failed to convert yolo to sl objects");
+            NODELET_WARN_STREAM("failed to convert yolo to sl objects");
+            mYoloObjPub.publish(objMsg);
+            mYoloObjDet3DPub.publish(det3dMsg);
             return;
         }
     }
@@ -4672,17 +4692,7 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
 
     size_t objCount = objects.object_list.size();
 
-    zed_interfaces::ObjectsStampedPtr objMsg = boost::make_shared<zed_interfaces::ObjectsStamped>();
-
-    objMsg->header.stamp = timestamp;
-    objMsg->header.frame_id = mLeftCamFrameId;
-
     objMsg->objects.resize(objCount);
-
-    vision_msgs::Detection3DArrayPtr det3dMsg = boost::make_shared<vision_msgs::Detection3DArray>();
-
-    det3dMsg->header.stamp = timestamp;
-    det3dMsg->header.frame_id = mLeftCamFrameId;
 
     det3dMsg->detections.resize(objCount);
 

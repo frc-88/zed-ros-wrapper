@@ -611,6 +611,9 @@ void ZEDWrapperNodelet::onInit()
     mSrvStartObjDet = mNhNs.advertiseService("start_object_detection", &ZEDWrapperNodelet::on_start_object_detection, this);
     mSrvStopObjDet = mNhNs.advertiseService("stop_object_detection", &ZEDWrapperNodelet::on_stop_object_detection, this);
 
+    mSrvStartObjDet = mNhNs.advertiseService("start_yolo_object_detection", &ZEDWrapperNodelet::on_start_yolo_object_detection, this);
+    mSrvStopObjDet = mNhNs.advertiseService("stop_yolo_object_detection", &ZEDWrapperNodelet::on_stop_yolo_object_detection, this);
+
     mSrvSaveAreaMemory = mNhNs.advertiseService("save_area_memory", &ZEDWrapperNodelet::on_save_area_memory, this);
 
     // Start Pointcloud thread
@@ -4463,6 +4466,60 @@ bool ZEDWrapperNodelet::on_stop_object_detection(zed_interfaces::stop_object_det
         mObjDetMutex.lock();
         stop_obj_detect();
         mObjDetMutex.unlock();
+
+        res.done = true;
+    } else {
+        res.done = false;
+    }
+
+    return res.done;
+}
+
+bool ZEDWrapperNodelet::on_start_yolo_object_detection(zed_interfaces::start_object_detection::Request& req,
+    zed_interfaces::start_object_detection::Response& res)
+{
+    NODELET_INFO("Called 'start_yolo_object_detection' service");
+
+    if (mZedRealCamModel == sl::MODEL::ZED) {
+        mYoloObjEnabled = false;
+        mYoloObjRunning = false;
+
+        NODELET_ERROR_STREAM("YOLO Object detection not started. OD is not available for ZED camera model");
+        res.done = false;
+        return res.done;
+    }
+
+    if (mYoloObjEnabled && mYoloObjRunning) {
+        NODELET_WARN_STREAM("YOLO Object Detection was just running");
+
+        res.done = false;
+        return res.done;
+    }
+
+    mYoloObjRunning = false;
+
+    mYoloObjDetConfidence = req.confidence;
+    mYoloObjDetNmsConfidence = req.tracking;
+
+    NODELET_INFO_STREAM(" * Object min. confidence\t-> " << mYoloObjDetConfidence);
+    NODELET_INFO_STREAM(" * Object tracking\t\t-> " << (mYoloObjEnabled ? "ENABLED" : "DISABLED"));
+
+    mYoloObjRunning = false;
+    mYoloObjEnabled = true;
+    res.done = true;
+
+    return res.done;
+}
+
+/*! \brief Service callback to stop_object_detection service
+ */
+bool ZEDWrapperNodelet::on_stop_yolo_object_detection(zed_interfaces::stop_object_detection::Request& req,
+    zed_interfaces::stop_object_detection::Response& res)
+{
+    if (mYoloObjEnabled) {
+        mYoloObjMutex.lock();
+        stop_yolo_obj_detect();
+        mYoloObjMutex.unlock();
 
         res.done = true;
     } else {

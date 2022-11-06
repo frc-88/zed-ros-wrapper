@@ -1548,7 +1548,9 @@ bool ZEDWrapperNodelet::start_yolo_obj_detect()
         } else {
             device_type = torch::kCPU;
         }
+        NODELET_INFO_STREAM("Loading model from " << mYoloModelPath);
         mDetector = new YoloDetector(mYoloModelPath, device_type, mYoloReportLoopTimes);
+        NODELET_INFO_STREAM("Loading class names from " << mYoloClassNamesPath);
         mYoloClassNames = YoloDetector::LoadNames(mYoloClassNamesPath);
         if (mYoloClassNames.empty()) {
             NODELET_ERROR("Error loading class names from %s", mYoloClassNamesPath.c_str());
@@ -4505,9 +4507,11 @@ bool ZEDWrapperNodelet::on_start_yolo_object_detection(zed_interfaces::start_obj
 
     mYoloObjDetConfidence = req.confidence;
     mYoloObjDetNmsConfidence = req.max_range;
+    mYoloObjTracking = req.tracking;
 
     NODELET_INFO_STREAM(" * Object min. confidence\t-> " << mYoloObjDetConfidence);
-    NODELET_INFO_STREAM(" * Object tracking\t\t-> " << (mYoloObjEnabled ? "ENABLED" : "DISABLED"));
+    NODELET_INFO_STREAM(" * Object NMS. confidence\t-> " << mYoloObjDetNmsConfidence);
+    NODELET_INFO_STREAM(" * Object tracking\t\t-> " << (mYoloObjTracking ? "ENABLED" : "DISABLED"));
 
     mYoloObjRunning = false;
     mYoloObjEnabled = true;

@@ -334,6 +334,16 @@ protected:
     bool on_stop_object_detection(zed_interfaces::stop_object_detection::Request& req,
         zed_interfaces::stop_object_detection::Response& res);
 
+    /*! \brief Service callback to start_yolo_object_detection service
+   */
+    bool on_start_yolo_object_detection(zed_interfaces::start_object_detection::Request& req,
+        zed_interfaces::start_object_detection::Response& res);
+
+    /*! \brief Service callback to stop_yolo_object_detection service
+   */
+    bool on_stop_yolo_object_detection(zed_interfaces::stop_object_detection::Request& req,
+        zed_interfaces::stop_object_detection::Response& res);
+
     /*! \brief Service callback to save_area_memory service
    */
     bool on_save_area_memory(zed_interfaces::save_area_memory::Request& req,

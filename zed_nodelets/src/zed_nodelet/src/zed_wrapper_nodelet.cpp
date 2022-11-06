@@ -4518,6 +4518,9 @@ bool ZEDWrapperNodelet::on_start_yolo_object_detection(zed_interfaces::start_obj
     NODELET_INFO_STREAM(" * Object NMS. confidence\t-> " << mYoloObjDetNmsConfidence);
     NODELET_INFO_STREAM(" * Object tracking\t\t-> " << (mYoloObjTracking ? "ENABLED" : "DISABLED"));
 
+    mYoloObjDetConfidence /= 100.0f;
+    mYoloObjDetNmsConfidence /= 100.0f;
+
     mYoloObjRunning = false;
     mYoloObjEnabled = true;
     res.done = true;

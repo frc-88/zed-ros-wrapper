@@ -58,6 +58,8 @@
 #include <zed_interfaces/stop_remote_stream.h>
 #include <zed_interfaces/stop_svo_recording.h>
 #include <zed_interfaces/toggle_led.h>
+#include <zed_interfaces/Object.h>
+#include <zed_interfaces/ObjectsStamped.h>
 
 #include "yolo_detector.hpp"
 
@@ -408,6 +410,11 @@ protected:
     /*! \brief Publish yolo object detection results
    */
     void detectYoloObjects(ros::Time t);
+    void warmupYoloObjects();
+    std::vector<std::vector<Detection>> runYoloObjectsDetector();
+    void convertDetectionsToMessages(std::vector<std::vector<Detection>>& detections, sl::Objects objects, zed_interfaces::ObjectsStampedPtr objMsg, vision_msgs::Detection3DArrayPtr det3dMsg);
+    void convertSLtoObjectsStamped(int class_idx, sl::ObjectData data, zed_interfaces::Object& objMsg);
+    void convertObjectToDetectionMsg(int class_idx, zed_interfaces::Object objMsg, vision_msgs::Detection3D& detectionMsg);
 
     /*! \brief Generates an univoque color for each object class ID
    */

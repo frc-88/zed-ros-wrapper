@@ -4646,11 +4646,12 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
         return;
     }
 
-    sl::ObjectDetectionRuntimeParameters objectTracker_parameters_rt;
+    if (!mYoloObjWarmedUp) {
+        warmupYoloObjects();
+        return;
+    }
 
-    static sl::Mat mat_left;
-    static sl::Objects objects;
-    static std::vector<std::vector<Detection>> detections;
+    std::vector<std::vector<Detection>> detections = runYoloObjectsDetector();
 
     zed_interfaces::ObjectsStampedPtr objMsg = boost::make_shared<zed_interfaces::ObjectsStamped>();
 
@@ -4662,110 +4663,140 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
     det3dMsg->header.stamp = timestamp;
     det3dMsg->header.frame_id = mLeftCamFrameId;
 
+    if (detections.empty()) {
+        mYoloObjPub.publish(objMsg);
+        mYoloObjDet3DPub.publish(det3dMsg);
+        return;
+    }
+
+    sl::Objects objects;
+    if (!detectionsToSlObjects(detections[0], objects)) {
+        NODELET_WARN_STREAM("failed to convert yolo to sl objects");
+        mYoloObjPub.publish(objMsg);
+        mYoloObjDet3DPub.publish(det3dMsg);
+        return;
+    }
+
+    convertDetectionsToMessages(detections, objects, objMsg, det3dMsg);
+
+    mYoloObjPub.publish(objMsg);
+    mYoloObjDet3DPub.publish(det3dMsg);
+}
+
+void ZEDWrapperNodelet::warmupYoloObjects()
+{
+    if (mYoloObjWarmedUp) {
+        NODELET_WARN_STREAM("YOLO detector is already warmed up. No need to call it more than once.");
+        return;
+    }
+    sl::Mat mat_left;
     if (mZed.retrieveImage(mat_left, sl::VIEW::LEFT, sl::MEM::CPU, mMatResolVideo) == sl::ERROR_CODE::SUCCESS)
     {
         cv::Mat cvmat_left = sl_tools::slMat2cvMat(mat_left);
-        if (mYoloObjWarmedUp) {
-            detections = mDetector->Run(cvmat_left, mYoloObjDetConfidence, mYoloObjDetNmsConfidence);            
+        NODELET_INFO_STREAM("YOLO detector is warming up. First object detection will take a few seconds.");
+        for (int count = 0; count < 2; count++) {  // At least two images need to go through detector before it runs at full speed
+            mDetector->Run(cvmat_left, mYoloObjDetConfidence, mYoloObjDetNmsConfidence);
         }
-        else {
-            NODELET_INFO_STREAM("YOLO detector is warming up. First object detection will take a few seconds.");
-            for (int count = 0; count < 2; count++) {  // At least two images need to go through detector before it runs at full speed
-                detections = mDetector->Run(cvmat_left, mYoloObjDetConfidence, mYoloObjDetNmsConfidence);
-            }
-            NODELET_INFO_STREAM("YOLO detector is warmed up");
-        }
+        NODELET_INFO_STREAM("YOLO detector is warmed up");
         mYoloObjWarmedUp = true;
-        if (detections.empty()) {
-            mYoloObjPub.publish(objMsg);
-            mYoloObjDet3DPub.publish(det3dMsg);
-            return;
-        }
-
-        if (!detectionsToSlObjects(detections[0], objects)) {
-            NODELET_WARN_STREAM("failed to convert yolo to sl objects");
-            mYoloObjPub.publish(objMsg);
-            mYoloObjDet3DPub.publish(det3dMsg);
-            return;
-        }
     }
     else {
         NODELET_INFO_STREAM("failed to retrieve left image");
     }
+}
 
+std::vector<std::vector<Detection>> ZEDWrapperNodelet::runYoloObjectsDetector()
+{
+    sl::Mat mat_left;
+    std::vector<std::vector<Detection>> detections;
+
+    if (mZed.retrieveImage(mat_left, sl::VIEW::LEFT, sl::MEM::CPU, mMatResolVideo) == sl::ERROR_CODE::SUCCESS)
+    {
+        cv::Mat cvmat_left = sl_tools::slMat2cvMat(mat_left);
+        detections = mDetector->Run(cvmat_left, mYoloObjDetConfidence, mYoloObjDetNmsConfidence);
+    }
+    else {
+        NODELET_WARN_STREAM("failed to retrieve left image");
+    }
+    return detections;
+}
+
+void ZEDWrapperNodelet::convertDetectionsToMessages(std::vector<std::vector<Detection>>& detections, sl::Objects objects, zed_interfaces::ObjectsStampedPtr objMsg, vision_msgs::Detection3DArrayPtr det3dMsg)
+{
     size_t objCount = objects.object_list.size();
-
     objMsg->objects.resize(objCount);
-
     det3dMsg->detections.resize(objCount);
 
     size_t idx = 0;
     for (auto data : objects.object_list) {
         int class_idx = detections[0][idx].class_idx;
-        std::string class_name = 0 <= class_idx && class_idx < mYoloClassNames.size() ? mYoloClassNames[class_idx] : "Unknown";
-        objMsg->objects[idx].label = class_name;
-        objMsg->objects[idx].sublabel = std::to_string(class_idx);
-        objMsg->objects[idx].label_id = data.id;
-        objMsg->objects[idx].confidence = data.confidence;
+        convertSLtoObjectsStamped(class_idx, data, objMsg->objects[idx]);
+        vision_msgs::Detection3D detectionMsg;
+        convertObjectToDetectionMsg(class_idx, objMsg->objects[idx], detectionMsg);
+        detectionMsg.header = det3dMsg->header;
+        det3dMsg->detections[idx] = detectionMsg;
 
-        memcpy(&(objMsg->objects[idx].position[0]),
-            &(data.position[0]),
-            3 * sizeof(float));
-        memcpy(&(objMsg->objects[idx].position_covariance[0]),
-            &(data.position_covariance[0]),
-            6 * sizeof(float));
-        memcpy(&(objMsg->objects[idx].velocity[0]),
-            &(data.velocity[0]),
-            3 * sizeof(float));
-
-        objMsg->objects[idx].tracking_available = mYoloObjTracking;
-        objMsg->objects[idx].tracking_state = static_cast<int8_t>(data.tracking_state);
-        objMsg->objects[idx].action_state = static_cast<int8_t>(data.action_state);
-
-        if (data.bounding_box_2d.size() == 4) {
-            memcpy(&(objMsg->objects[idx].bounding_box_2d.corners[0]),
-                &(data.bounding_box_2d[0]),
-                8 * sizeof(unsigned int));
-        }
-        if (data.bounding_box.size() == 8) {
-            memcpy(&(objMsg->objects[idx].bounding_box_3d.corners[0]),
-                &(data.bounding_box[0]),
-                24 * sizeof(float));
-        }
-
-        memcpy(&(objMsg->objects[idx].dimensions_3d[0]),
-            &(data.dimensions[0]),
-            3 * sizeof(float));
-
-        objMsg->objects[idx].skeleton_available = false;
-
-
-        vision_msgs::Detection3D detection_msg;
-        vision_msgs::ObjectHypothesisWithPose hyp;
-
-        detection_msg.header = det3dMsg->header;
-
-        hyp.id = (objMsg->objects[idx].label_id << 16) | class_idx;
-        hyp.score = objMsg->objects[idx].confidence;
-
-        detection_msg.bbox.center.position.x = objMsg->objects[idx].position[0];
-        detection_msg.bbox.center.position.y = objMsg->objects[idx].position[1];
-        detection_msg.bbox.center.position.z = objMsg->objects[idx].position[2];
-        detection_msg.bbox.center.orientation.w = 1.0;
-        detection_msg.bbox.size.x = objMsg->objects[idx].dimensions_3d[0];
-        detection_msg.bbox.size.y = objMsg->objects[idx].dimensions_3d[1];
-        detection_msg.bbox.size.z = objMsg->objects[idx].dimensions_3d[2];
-        hyp.pose.pose = detection_msg.bbox.center;
-
-        detection_msg.results.push_back(hyp);
-        det3dMsg->detections[idx] = detection_msg;
-
-        // at the end of the loop
         idx++;
     }
+}
 
-    mYoloObjPub.publish(objMsg);
-    mYoloObjDet3DPub.publish(det3dMsg);
+void ZEDWrapperNodelet::convertSLtoObjectsStamped(int class_idx, sl::ObjectData data, zed_interfaces::Object& objMsg) {
+    std::string class_name = 0 <= class_idx && class_idx < mYoloClassNames.size() ? mYoloClassNames[class_idx] : "Unknown";
+    objMsg.label = class_name;
+    objMsg.sublabel = std::to_string(class_idx);
+    objMsg.label_id = data.id;
+    objMsg.confidence = data.confidence;
+
+    memcpy(&(objMsg.position[0]),
+        &(data.position[0]),
+        3 * sizeof(float));
+    memcpy(&(objMsg.position_covariance[0]),
+        &(data.position_covariance[0]),
+        6 * sizeof(float));
+    memcpy(&(objMsg.velocity[0]),
+        &(data.velocity[0]),
+        3 * sizeof(float));
+
+    objMsg.tracking_available = mYoloObjTracking;
+    objMsg.tracking_state = static_cast<int8_t>(data.tracking_state);
+    objMsg.action_state = static_cast<int8_t>(data.action_state);
+
+    if (data.bounding_box_2d.size() == 4) {
+        memcpy(&(objMsg.bounding_box_2d.corners[0]),
+            &(data.bounding_box_2d[0]),
+            8 * sizeof(unsigned int));
+    }
+    if (data.bounding_box.size() == 8) {
+        memcpy(&(objMsg.bounding_box_3d.corners[0]),
+            &(data.bounding_box[0]),
+            24 * sizeof(float));
+    }
+
+    memcpy(&(objMsg.dimensions_3d[0]),
+        &(data.dimensions[0]),
+        3 * sizeof(float));
+
+    objMsg.skeleton_available = false;
+
+}
+
+void ZEDWrapperNodelet::convertObjectToDetectionMsg(int class_idx, zed_interfaces::Object objMsg, vision_msgs::Detection3D& detectionMsg) {
+
+    vision_msgs::ObjectHypothesisWithPose hyp;
+
+    hyp.id = (objMsg.label_id << 16) | class_idx;
+    hyp.score = objMsg.confidence;
+
+    detectionMsg.bbox.center.position.x = objMsg.position[0];
+    detectionMsg.bbox.center.position.y = objMsg.position[1];
+    detectionMsg.bbox.center.position.z = objMsg.position[2];
+    detectionMsg.bbox.center.orientation.w = 1.0;
+    detectionMsg.bbox.size.x = objMsg.dimensions_3d[0];
+    detectionMsg.bbox.size.y = objMsg.dimensions_3d[1];
+    detectionMsg.bbox.size.z = objMsg.dimensions_3d[2];
+    hyp.pose.pose = detectionMsg.bbox.center;
+
+    detectionMsg.results.push_back(hyp);
 }
 
 bool ZEDWrapperNodelet::detectionsToSlObjects(const std::vector<Detection>& detections, sl::Objects& objects)

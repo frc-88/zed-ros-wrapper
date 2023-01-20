@@ -4677,7 +4677,7 @@ void ZEDWrapperNodelet::detectYoloObjects(ros::Time timestamp)
         return;
     }
 
-    convertDetectionsToMessages(detections, objects, objMsg, det3dMsg);
+    convertDetectionsToMessages(objects, objMsg, det3dMsg);
 
     mYoloObjPub.publish(objMsg);
     mYoloObjDet3DPub.publish(det3dMsg);
@@ -4721,7 +4721,7 @@ std::vector<std::vector<Detection>> ZEDWrapperNodelet::runYoloObjectsDetector()
     return detections;
 }
 
-void ZEDWrapperNodelet::convertDetectionsToMessages(std::vector<std::vector<Detection>>& detections, sl::Objects objects, zed_interfaces::ObjectsStampedPtr objMsg, vision_msgs::Detection3DArrayPtr det3dMsg)
+void ZEDWrapperNodelet::convertDetectionsToMessages(sl::Objects objects, zed_interfaces::ObjectsStampedPtr objMsg, vision_msgs::Detection3DArrayPtr det3dMsg)
 {
     size_t objCount = objects.object_list.size();
     objMsg->objects.resize(objCount);
@@ -4729,7 +4729,7 @@ void ZEDWrapperNodelet::convertDetectionsToMessages(std::vector<std::vector<Dete
 
     size_t idx = 0;
     for (auto data : objects.object_list) {
-        int class_idx = detections[0][idx].class_idx;
+        int class_idx = (int)data.id;
         convertSLtoObjectsStamped(class_idx, data, objMsg->objects[idx]);
         vision_msgs::Detection3D detectionMsg;
         convertObjectToDetectionMsg(class_idx, objMsg->objects[idx], detectionMsg);

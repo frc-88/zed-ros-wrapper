@@ -4729,7 +4729,7 @@ void ZEDWrapperNodelet::convertDetectionsToMessages(sl::Objects objects, zed_int
 
     size_t idx = 0;
     for (auto data : objects.object_list) {
-        int class_idx = (int)data.id;
+        int class_idx = (int)data.raw_label;
         convertSLtoObjectsStamped(class_idx, data, objMsg->objects[idx]);
         vision_msgs::Detection3D detectionMsg;
         convertObjectToDetectionMsg(class_idx, objMsg->objects[idx], detectionMsg);
